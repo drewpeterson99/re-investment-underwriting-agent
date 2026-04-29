@@ -1,0 +1,20 @@
+version: 1
+output_format: json
+fields:
+  StreetAddress:
+    type: string
+    required: true
+    description: Property street address including only number and street name.
+  YearBuilt:
+    type: integer
+    required: true
+    min: 1700
+    max: 2100
+    description: Four-digit year the main structure was built.
+  AskingPrice:
+    type: integer
+    required: true
+    min: 1
+    description: Property asking price in USD as an integer.
+    normalization:
+      rule: convert currency amount text to an integer, rounding up to the nearest dollar
