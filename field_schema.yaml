@@ -15,6 +15,54 @@ fields:
     type: integer
     required: true
     min: 1
-    description: Property asking price in USD as an integer.
+    description: >-
+      Listed sale price in USD as a whole-dollar integer. Map informal listing language here:
+      phrases like "asking $675k", "listed at 675K", "priced at $675,000", "list price 1.2M",
+      or "$675k asking" all refer to this field (675k → 675000, 1.2M → 1200000).
+    normalization:
+      rule: convert currency amount text to an integer, rounding up to the nearest dollar; treat trailing k/K as thousands and m/M as millions
+  AssessedValue:
+    type: integer
+    required: false
+    min: 1
+    description: >-
+      Most recent tax assessed value of the property in USD as a whole-dollar integer (county assessor /
+      tax bill). Map phrases like "assessed at $450k", "tax assessment $450,000", or "AV $325k" here.
+    normalization:
+      rule: convert currency amount text to an integer, rounding up to the nearest dollar; treat trailing k/K as thousands and m/M as millions
+  Bedrooms:
+    type: integer
+    required: false
+    min: 0
+    description: Total number of bedrooms for the entire property (all units combined).
+  Bathrooms:
+    type: number
+    required: false
+    min: 0
+    decimal_places: 1
+    description: Total bathrooms for the entire property (all units combined); use one decimal for half baths (e.g. 2.5).
+  ListingDate:
+    type: string
+    required: false
+    format: m/d/yyyy
+    description: Date the listing became active or was published (month and day without leading zeros, e.g. 4/16/2026).
+  SquareFootage:
+    type: integer
+    required: false
+    min: 1
+    description: Total interior square footage of the entire building or property, not per-unit square footage.
+  Units:
+    type: integer
+    required: false
+    min: 1
+    description: Count of separate dwelling units on the property (single-family = 1, duplex = 2, triplex = 3, etc.).
+  RentCastRent:
+    type: integer
+    required: false
+    min: 1
+    description: >-
+      Estimated total monthly rent for the entire property in USD (sum across all units).
+      Map phrases like "RentCast rent estimate is $4070 per month total", "estimated rent $8000/mo",
+      or "$4000 per month" for the whole building here—not the asking price.
     normalization:
       rule: convert currency amount text to an integer, rounding up to the nearest dollar
