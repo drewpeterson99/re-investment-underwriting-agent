@@ -5,6 +5,13 @@ fields:
     type: string
     required: true
     description: Property street address including only number and street name.
+  CityState:
+    type: string
+    required: false
+    format: "City, State"
+    description: >-
+      City and state where the property is located, as "City, ST" (e.g. Cleveland, OH). Used for the output
+      workbook file name when present (comma omitted in the file name).
   YearBuilt:
     type: integer
     required: true
@@ -21,9 +28,26 @@ fields:
       or "$675k asking" all refer to this field (675k → 675000, 1.2M → 1200000).
     normalization:
       rule: convert currency amount text to an integer, rounding up to the nearest dollar; treat trailing k/K as thousands and m/M as millions
-  AssessedValue:
+  PurchasePrice:
     type: integer
     required: false
+    min: 1
+    description: >-
+      Contract purchase price in USD (whole dollars)—the amount the buyer will pay for the property,
+      which may differ from list/asking price.
+    normalization:
+      rule: convert currency amount text to an integer, rounding up to the nearest dollar; treat trailing k/K as thousands and m/M as millions
+  SellerConcessions:
+    type: integer
+    required: false
+    min: 0
+    description: >-
+      Seller concessions in USD (whole dollars)—money the seller contributes toward the buyer's closing costs.
+    normalization:
+      rule: convert currency amount text to an integer, rounding up to the nearest dollar; treat trailing k/K as thousands and m/M as millions
+  AssessedValue:
+    type: integer
+    required: true
     min: 1
     description: >-
       Most recent tax assessed value of the property in USD as a whole-dollar integer (county assessor /
@@ -32,12 +56,12 @@ fields:
       rule: convert currency amount text to an integer, rounding up to the nearest dollar; treat trailing k/K as thousands and m/M as millions
   Bedrooms:
     type: integer
-    required: false
+    required: true
     min: 0
     description: Total number of bedrooms for the entire property (all units combined).
   Bathrooms:
     type: number
-    required: false
+    required: true
     min: 0
     decimal_places: 1
     description: Total bathrooms for the entire property (all units combined); use one decimal for half baths (e.g. 2.5).
@@ -48,21 +72,31 @@ fields:
     description: Date the listing became active or was published (month and day without leading zeros, e.g. 4/16/2026).
   SquareFootage:
     type: integer
-    required: false
+    required: true
     min: 1
     description: Total interior square footage of the entire building or property, not per-unit square footage.
   Units:
     type: integer
-    required: false
+    required: true
     min: 1
     description: Count of separate dwelling units on the property (single-family = 1, duplex = 2, triplex = 3, etc.).
   RentCastRent:
     type: integer
-    required: false
+    required: true
     min: 1
     description: >-
       Estimated total monthly rent for the entire property in USD (sum across all units).
       Map phrases like "RentCast rent estimate is $4070 per month total", "estimated rent $8000/mo",
       or "$4000 per month" for the whole building here—not the asking price.
+    normalization:
+      rule: convert currency amount text to an integer, rounding up to the nearest dollar
+  InPlaceRent:
+    type: integer
+    required: false
+    min: 1
+    description: >-
+      Actual in-place (occupied) total monthly rent for the entire property in USD—what tenants pay today,
+      not a market estimate. Map phrases like "in-place rent $5200", "in place rent is $4,200/mo",
+      or "current collected rent $3800" here; use RentCastRent for third-party rent estimates.
     normalization:
       rule: convert currency amount text to an integer, rounding up to the nearest dollar

@@ -5,9 +5,27 @@ Python agent that:
 - extracts required underwriting fields from natural language using a YAML-defined schema,
 - writes extracted values into named cells in a copied Excel template via `openpyxl`.
 
-Current target fields:
+Current target fields mirror **`field_schema.yaml`** (including which fields are required—edit that file if you want stricter extraction).
+
+**Required**
+
 - `StreetAddress`
 - `YearBuilt`
+- `AskingPrice`
+- `AssessedValue`
+- `Bedrooms`
+- `Bathrooms`
+- `SquareFootage`
+- `RentCastRent`
+- `Units`
+
+**Optional**
+
+- `ListingDate`
+- `InPlaceRent`
+- `PurchasePrice` (contract purchase amount in USD; same currency normalization as `AskingPrice`)
+- `SellerConcessions` (seller-paid closing help in USD; same currency rules; minimum 0)
+- `CityState` (location as `"City, State"`—when extracted, the default output file name uses this instead of `Charlotte NC`, with the comma omitted from the file name segment)
 
 ## Suggested GGUF model
 
@@ -35,29 +53,38 @@ pytest
 
 ## Run
 
-<!-- Defaults for each flag are documented in "CLI defaults" below; keep this example in sync with parse_args() in main.py. -->
+The simplest way for a human to run the script is with **`--gui`**: a window opens, you paste the listing (including **`$` amounts**—no shell quoting issues), then click **Finish**.
+
+<!-- Defaults for optional flags are in "CLI defaults" below; keep examples in sync with parse_args() in main.py. -->
 
 ```powershell
 # Optional: set once per shell so you can omit --model (see CLI defaults).
 # $env:UNDERWRITING_GGUF = "C:\local_models\Qwen2.5-7B-Instruct-Q5_K_M.gguf"
 
-# Use single quotes for --prompt when the text contains $ — double quotes cause PowerShell to eat `$675k`.
+py main.py `
+  --model "C:\local_models\Qwen2.5-7B-Instruct-Q5_K_M.gguf" `
+  --gui
+```
+
+Other ways to supply listing text (for automation, scripts, or non-interactive runs):
+
+- **`--prompt-file listing.txt`** — UTF-8 file (good for long text or CI).
+- **`--prompt '...'`** — Inline text; on PowerShell use **single quotes** when the text contains **`$`**, or **`$675k`** may be mangled.
+
+```powershell
 py main.py `
   --model "C:\local_models\Qwen2.5-7B-Instruct-Q5_K_M.gguf" `
   --template "TCG Blank Model Template 2026-04-26.xlsx" `
   --output "Output" `
   --schema "field_schema.yaml" `
   --prompt 'Subject property is 123 Main St, Cleveland, OH 44113. Home was built in 1978. Asking price is $ 120,000'
-
-# Or use a UTF-8 file: --prompt-file listing.txt
-# Or paste in a window (best on Windows; preserves $): --gui
 ```
 
 ### CLI defaults
 
 Arguments that must be supplied (no fallback default in code):
 
-- **`--prompt`**, **`--prompt-file`**, or **`--gui`** — Exactly one way to supply listing text. Prefer **`--gui`** on Windows to paste into a small dialog so **`$` amounts are never mangled by PowerShell**. **`--prompt-file`** is good for automation or very long text. Inline **`--prompt`** works if you use **single quotes** around the value when it contains `$`.
+- **Listing text** — Provide exactly one of **`--gui`** (recommended for interactive use), **`--prompt-file`**, or **`--prompt`**. **`--gui`** avoids PowerShell mangling **`$`** and is the least error-prone for hands-on runs. Use **`--prompt-file`** or **`--prompt`** when you need a scripted or non-GUI workflow; use **single quotes** around **`--prompt`** on PowerShell if the text contains **`$`**.
 
 Arguments that are optional on the CLI but still need a model path before the run succeeds:
 
@@ -74,8 +101,8 @@ Optional arguments with built-in defaults (see `parse_args()` in `main.py`):
 The script will:
 1. call the model to extract fields from the prompt,
 2. validate/coerce output according to `field_schema.yaml`,
-3. copy the template workbook to the output path (default file name: `{StreetAddress} - Charlotte NC - Model {yyyy-mm-dd}.xlsx` under `Output`),
-4. write values into named cells (`StreetAddress`, `YearBuilt`).
+3. copy the template workbook to the output path (default directory file name: `{StreetAddress} - {location} - Model {yyyy-mm-dd}.xlsx` under `Output`, where `{location}` is `Charlotte NC` unless `CityState` is present—in which case it is derived from that value with the comma removed, e.g. `Cleveland, OH` → `Cleveland OH`),
+4. write values into Excel named cells matching each schema field name (e.g. `StreetAddress`, `AskingPrice`, …).
 
 ## Customize output format via YAML
 

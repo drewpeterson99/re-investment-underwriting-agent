@@ -185,6 +185,20 @@ def normalize_listing_date_m_d_yyyy(raw_value: Any) -> str:
     )
 
 
+def normalize_city_state_string(raw_value: Any) -> str:
+    """Normalize to 'City, ST' with a single comma; validate both sides are non-empty."""
+    s = " ".join(str(raw_value).split())
+    if not s:
+        raise ValueError("CityState is empty.")
+    if "," not in s:
+        raise ValueError(f"CityState must look like 'City, State'. Got: {raw_value!r}")
+    left, right = s.split(",", 1)
+    city, state = left.strip(), right.strip()
+    if not city or not state:
+        raise ValueError(f"CityState must include both city and state. Got: {raw_value!r}")
+    return f"{city}, {state}"
+
+
 def build_messages(schema: Dict[str, Any], user_input: str) -> Iterable[Dict[str, str]]:
     instructions = schema_to_instruction_block(schema)
     system_prompt = (
@@ -198,6 +212,10 @@ def build_messages(schema: Dict[str, Any], user_input: str) -> Iterable[Dict[str
         "Do not use numbers from listing dates (e.g. 4/16/2026) as AskingPrice. "
         "RentCast / rent estimate lines (e.g. 'RentCast rent estimate is $4070 per month total') "
         "map to RentCastRent as the monthly dollar integer for the whole property. "
+        "Actual occupied rent (e.g. 'in-place rent $5200', 'current collected rent') maps to InPlaceRent—not "
+        "third-party estimates. "
+        "PurchasePrice is the contract purchase amount; SellerConcessions is seller-paid closing help in dollars. "
+        "CityState must be like 'Cleveland, OH' when present. "
         "Required fields must be filled when the text clearly states them."
     )
     user_prompt = (
@@ -331,6 +349,20 @@ def reconcile_asking_price_from_source(
     return merged
 
 
+def _first_currency_amount_from_patterns(normalized_text: str, patterns: list[str]) -> int | None:
+    """First capturing group in each pattern must be the dollar digits."""
+    for pattern in patterns:
+        m = re.search(pattern, normalized_text)
+        if not m:
+            continue
+        num = m.group(1).replace(",", "")
+        try:
+            return normalize_currency_text_to_int(num)
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
 def extract_rentcast_monthly_total_usd_from_text(text: str) -> int | None:
     """Extract total monthly rent when phrased as RentCast estimate or 'per month'."""
     if not text or not str(text).strip():
@@ -343,16 +375,21 @@ def extract_rentcast_monthly_total_usd_from_text(text: str) -> int | None:
         r"(?is)\$?\s*(\d[\d,]*)\s+per\s+month\s+total\b",
         r"(?is)\$?\s*(\d[\d,]*)\s+per\s+month\b",
     ]
-    for pattern in patterns:
-        m = re.search(pattern, s)
-        if not m:
-            continue
-        num = m.group(1).replace(",", "")
-        try:
-            return normalize_currency_text_to_int(num)
-        except (TypeError, ValueError):
-            continue
-    return None
+    return _first_currency_amount_from_patterns(s, patterns)
+
+
+def extract_inplace_rent_monthly_total_usd_from_text(text: str) -> int | None:
+    """Extract actual in-place / collected monthly rent (occupied property), distinct from RentCast estimates."""
+    if not text or not str(text).strip():
+        return None
+    s = normalize_extraction_source_text(str(text))
+    patterns = [
+        r"(?is)\bin[- ]?place\s+rent\b\s*(?:is|=|:)?\s*\$?\s*(\d[\d,]*)",
+        r"(?is)\bcurrent\s+(?:collected\s+)?rent\b\s*(?:is|=|:)?\s*\$?\s*(\d[\d,]*)",
+        r"(?is)\bactual\s+(?:monthly\s+)?rent\b\s*(?:is|=|:)?\s*\$?\s*(\d[\d,]*)",
+        r"(?is)\boccupied\s+rent\b\s*(?:is|=|:)?\s*\$?\s*(\d[\d,]*)",
+    ]
+    return _first_currency_amount_from_patterns(s, patterns)
 
 
 def fill_missing_rentcast_rent_from_source(
@@ -362,6 +399,16 @@ def fill_missing_rentcast_rent_from_source(
         return parsed
     return _copy_field_if_missing(
         parsed, "RentCastRent", extract_rentcast_monthly_total_usd_from_text(user_input)
+    )
+
+
+def fill_missing_inplace_rent_from_source(
+    parsed: Dict[str, Any], schema: Dict[str, Any], user_input: str
+) -> Dict[str, Any]:
+    if not isinstance(schema.get("fields", {}).get("InPlaceRent"), dict):
+        return parsed
+    return _copy_field_if_missing(
+        parsed, "InPlaceRent", extract_inplace_rent_monthly_total_usd_from_text(user_input)
     )
 
 
@@ -417,6 +464,8 @@ def coerce_and_validate(parsed: Dict[str, Any], schema: Dict[str, Any]) -> Dict[
             fmt = field_spec.get("format")
             if fmt in ("m/d/yyyy", "mm/dd/yyyy"):
                 text = normalize_listing_date_m_d_yyyy(text)
+            elif fmt == "City, State":
+                text = normalize_city_state_string(text)
             result[field_name] = text
 
     return result
@@ -448,6 +497,7 @@ def run_extraction(
     parsed = fill_missing_asking_price_from_source(parsed, schema, clean_input)
     parsed = reconcile_asking_price_from_source(parsed, schema, clean_input)
     parsed = fill_missing_rentcast_rent_from_source(parsed, schema, clean_input)
+    parsed = fill_missing_inplace_rent_from_source(parsed, schema, clean_input)
     return coerce_and_validate(parsed, schema)
 
 
@@ -490,17 +540,40 @@ def sanitize_filename_component(text: str) -> str:
     return out or "Unknown_Address"
 
 
-def resolve_output_workbook_path(output_arg: Path, street_address: str, today: date) -> Path:
+def location_segment_for_output_filename(city_state: str | None) -> str:
+    """
+    Middle segment of the default output file name: 'Charlotte NC' when CityState is absent,
+    otherwise city and state with commas removed (e.g. 'Cleveland, OH' -> 'Cleveland OH').
+    """
+    if city_state is None:
+        return "Charlotte NC"
+    s = str(city_state).strip()
+    if not s:
+        return "Charlotte NC"
+    without_commas = s.replace(",", " ")
+    collapsed = re.sub(r"\s+", " ", without_commas).strip()
+    safe = sanitize_filename_component(collapsed)
+    return safe if safe else "Charlotte NC"
+
+
+def resolve_output_workbook_path(
+    output_arg: Path,
+    street_address: str,
+    today: date,
+    city_state: str | None = None,
+) -> Path:
     """
     If output_arg ends with .xlsx, use it as the exact file path.
     Otherwise treat output_arg as the output directory and build:
-    ``{street} - Charlotte NC - Model {yyyy-mm-dd}.xlsx``
+    ``{street} - {location} - Model {yyyy-mm-dd}.xlsx``
+    where ``location`` is derived from ``CityState`` when set (comma omitted), else ``Charlotte NC``.
     """
     if output_arg.suffix.lower() == ".xlsx":
         return output_arg
     date_str = today.isoformat()
     x = sanitize_filename_component(street_address)
-    filename = f"{x} - Charlotte NC - Model {date_str}.xlsx"
+    loc = location_segment_for_output_filename(city_state)
+    filename = f"{x} - {loc} - Model {date_str}.xlsx"
     return output_arg / filename
 
 
@@ -527,7 +600,8 @@ def parse_args() -> argparse.Namespace:
         help=(
             "Path to the output .xlsx file, or a directory. "
             "If a directory (default: Output), the file name is "
-            '"{StreetAddress} - Charlotte NC - Model {yyyy-mm-dd}.xlsx".'
+            '"{StreetAddress} - {location} - Model {yyyy-mm-dd}.xlsx" '
+            "(location from CityState when present—comma omitted; else Charlotte NC)."
         ),
     )
     parser.add_argument(
@@ -612,7 +686,12 @@ def main() -> None:
     if not street:
         raise ValueError("StreetAddress is required to build the output filename.")
 
-    output_path = resolve_output_workbook_path(output_arg, str(street), date.today())
+    output_path = resolve_output_workbook_path(
+        output_arg,
+        str(street),
+        date.today(),
+        structured_values.get("CityState"),
+    )
 
     ensure_output_copy(template_path, output_path)
     write_named_cells(output_path, structured_values)

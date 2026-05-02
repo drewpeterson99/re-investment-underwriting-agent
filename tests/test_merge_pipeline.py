@@ -24,6 +24,7 @@ def test_pipeline_repairs_bad_asking_price_and_fills_rentcast(
         "StreetAddress": "5111 Clearwater Rd",
         "YearBuilt": 2007,
         "AskingPrice": "4",
+        "AssessedValue": 400_000,
         "Bedrooms": 7,
         "Bathrooms": 4.5,
         "ListingDate": "04/16/2026",
